@@ -132,22 +132,6 @@ curl -X GET 'http://127.0.0.1:8000/api/v1/funds' \
 ---
 
 ### Optimize Portfolio — `POST /api/v1/optimize`
-
-Main endpoint. Accepts a portfolio and optimization strategy, returns rebalanced weights.
-
-**Request fields:**
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `securities` | array | ✅ | List of `{ ticker, current_weight }`. Weights must sum to 100. |
-| `strategy` | string | ✅ | One of: `equal_weights`, `risk_parity`, `minimize_drawdown`, `minimize_volatility`, `maximize_sharpe_ratio`, `optimize_factor_exposure` |
-| `weight_constraints` | object | ❌ | Per-ticker `{ min_weight, max_weight }` overrides |
-| `portfolio_constraints` | object | ❌ | Portfolio-level constraints e.g. `{ "min_dividend_yield": 2.5 }` |
-| `factor_to_optimize` | string | ❌ | Required for factor strategy: `momentum`, `value`, or `size` |
-| `factor_direction` | string | ❌ | `maximize` or `minimize` (default: `maximize`) |
-
-<hr>
-
 ## :test_tube: Test Scenarios
 
 All six test cases from the assignment, validated against the live Finominal tool. Required cases 1–5 match the reference output within < 0.1% floating-point tolerance.
@@ -277,55 +261,6 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/optimize' \
 ```
 
 <hr>
-
-## :memo: API Response Format
-
-### Required — Allocation Changes
-
-```json
-{
-  "optimization_strategy": "minimize_volatility",
-  "allocation_changes": [
-    {
-      "ticker": "AGG",
-      "security_name": "iShares Core US Aggregate Bond ETF",
-      "current_weight": 50.0,
-      "optimized_weight": 37.65,
-      "change": -12.35
-    },
-    {
-      "ticker": "SPY",
-      "security_name": "SPDR S&P 500 ETF Trust",
-      "current_weight": 50.0,
-      "optimized_weight": 62.35,
-      "change": 12.35
-    }
-  ]
-}
-```
-
-### Bonus — Factor Betas *(returned with `optimize_factor_exposure`)*
-
-Factor betas are computed via OLS regression of the portfolio return series against the Momentum, Value, and Size factor returns, using the common overlapping date range.
-
-```json
-{
-  "optimization_strategy": "optimize_factor_exposure",
-  "allocation_changes": ["..."],
-  "factor_betas": {
-    "current_portfolio": {
-      "value": 0.09,
-      "momentum": 0.10,
-      "size": 0.12
-    },
-    "optimized_portfolio": {
-      "value": 0.14,
-      "momentum": 0.18,
-      "size": 0.08
-    }
-  }
-}
-```
 
 > **Note:** Factor betas will not match the live tool exactly — the live tool uses a broader internal factor model. My implementation uses the three provided factors. The directional result is correct: maximizing Momentum produces a higher Momentum beta in the optimized portfolio vs. the original.
 
