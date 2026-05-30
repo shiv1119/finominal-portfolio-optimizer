@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from app.api.routes import router
 from app.utils.errors import PortfolioOptimizerException, ErrorCode
 import logging
@@ -60,14 +61,6 @@ async def generic_exception_handler(request: Request, exc: Exception):
         }
     )
 
-@app.get("/")
+@app.get("/", include_in_schema=False)
 async def root():
-    # Simple landing response that points newcomers to the right places —
-    # /docs for the interactive Swagger UI and /api/v1/health to confirm the
-    # service is running with data loaded.
-    return {
-        "message": "Portfolio Optimizer API",
-        "version": "1.0.0",
-        "docs": "/docs",
-        "health": "/api/v1/health"
-    }
+    return RedirectResponse(url="/docs")

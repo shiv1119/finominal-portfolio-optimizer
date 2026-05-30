@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, validator
 from typing import List, Optional, Dict, Any
 from enum import Enum
+from datetime import date
 
 class OptimizationStrategy(str, Enum):
     # Enum listing all supported optimization strategies.
@@ -38,10 +39,23 @@ class WeightConstraint(BaseModel):
 class PortfolioConstraints(BaseModel):
     # Holds portfolio-level performance constraints that the optimizer must respect.
     # All fields are optional — only include the metrics you want to enforce.
-    min_cagr: Optional[float] = Field(None, description="Minimum CAGR requirement")
-    max_volatility: Optional[float] = Field(None, ge=0, description="Maximum volatility constraint")
-    max_drawdown: Optional[float] = Field(None, ge=0, le=100, description="Maximum drawdown constraint")
-    min_dividend_yield: Optional[float] = Field(None, ge=0, description="Minimum dividend yield requirement")
+    # min_volatility and max_volatility together define the volatility range,
+    # matching the live tool's "Volatility Range" lower/upper limit fields.
+    min_cagr: Optional[float] = Field(None, description="Minimum CAGR requirement (%)")
+    min_volatility: Optional[float] = Field(None, ge=0, description="Minimum volatility constraint (%) — lower bound of volatility range")
+    max_volatility: Optional[float] = Field(None, ge=0, description="Maximum volatility constraint (%) — upper bound of volatility range")
+    max_drawdown: Optional[float] = Field(None, ge=0, le=100, description="Maximum drawdown constraint (%)")
+    min_dividend_yield: Optional[float] = Field(None, ge=0, description="Minimum dividend yield requirement (%)")
+
+    @validator('max_volatility')
+    def validate_volatility_range(cls, v, values, **kwargs):
+        # If both min and max volatility are provided, make sure the range makes sense.
+        if 'min_volatility' in values and values['min_volatility'] is not None and v is not None:
+            if values['min_volatility'] > v:
+                raise ValueError(
+                    f"min_volatility ({values['min_volatility']}) cannot be greater than max_volatility ({v})"
+                )
+        return v
 
 class SecurityInput(BaseModel):
     # Represents a single security in the input list, identified by ticker and its
@@ -51,14 +65,28 @@ class SecurityInput(BaseModel):
 
 class OptimizationRequest(BaseModel):
     # The main request body sent to the optimization API.
-    # It carries the list of securities, the chosen strategy, and any optional constraints.
+    # It carries the list of securities, the chosen strategy, optional constraints,
+    # and an optional time frame (start_date / end_date) that controls which slice
+    # of historical data the optimizer uses — mirroring the live tool's Time Frame field.
     securities: List[SecurityInput] = Field(..., min_items=1, description="List of securities with current weights")
     strategy: OptimizationStrategy = Field(..., description="Optimization strategy to apply")
-    weight_constraints: Optional[Dict[str, WeightConstraint]] = Field(None, description="Per-security weight constraints")
+    weight_constraints: Optional[Dict[str, WeightConstraint]] = Field(None, description="Per-security weight constraints keyed by ticker")
     portfolio_constraints: Optional[PortfolioConstraints] = Field(None, description="Portfolio-level constraints")
     factor_to_optimize: Optional[str] = Field(None, description="Factor to optimize (momentum/value/size) for factor exposure strategy")
     factor_direction: Optional[str] = Field("maximize", description="maximize or minimize factor exposure")
-    
+
+    # Date range fields — both optional.
+    # If omitted, the full available history is used (same default as the live tool).
+    # Format: YYYY-MM-DD  e.g. "2004-11-18"
+    start_date: Optional[str] = Field(
+        None,
+        description="Start date for historical data window (YYYY-MM-DD). Defaults to earliest available date."
+    )
+    end_date: Optional[str] = Field(
+        None,
+        description="End date for historical data window (YYYY-MM-DD). Defaults to latest available date."
+    )
+
     @validator('securities')
     def validate_weights_sum(cls, v):
         # Rejects the request early if the security weights don't add up to exactly 100%,
@@ -67,7 +95,28 @@ class OptimizationRequest(BaseModel):
         if abs(total_weight - 100) > 0.01:  # Allow 0.01% floating point tolerance
             raise ValueError(f"Current weights must sum to 100%, got {total_weight}%")
         return v
-    
+
+    @validator('start_date', 'end_date')
+    def validate_date_format(cls, v):
+        # Enforce ISO date format so we get a clean error message instead of a
+        # confusing pandas parse failure buried inside the optimizer.
+        if v is not None:
+            try:
+                date.fromisoformat(v)
+            except ValueError:
+                raise ValueError(f"Invalid date format '{v}'. Use YYYY-MM-DD (e.g. '2010-01-01')")
+        return v
+
+    @validator('end_date')
+    def validate_date_range(cls, v, values):
+        # If both dates are present, make sure start comes before end.
+        if v is not None and 'start_date' in values and values['start_date'] is not None:
+            if values['start_date'] >= v:
+                raise ValueError(
+                    f"start_date ({values['start_date']}) must be before end_date ({v})"
+                )
+        return v
+
     @validator('factor_to_optimize')
     def validate_factor(cls, v, values):
         # When the strategy is OPTIMIZE_FACTOR_EXPOSURE, makes sure factor_to_optimize

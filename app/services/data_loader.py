@@ -35,7 +35,6 @@ class DataLoader:
             if not self.file_path.exists():
                 raise FileNotFoundError(f"Excel file not found: {self.file_path}")
             
-            # Load all sheets
             excel_file = pd.ExcelFile(self.file_path)
             sheet_names = excel_file.sheet_names
             logger.info(f"Loading data from {self.filename}. Sheets found: {sheet_names}")
@@ -80,7 +79,6 @@ class DataLoader:
             logger.info(f"Loading fund info from '{sheet_name}' with {len(df)} rows")
             logger.info(f"Columns: {list(df.columns)}")
             
-            # Find columns
             ticker_col = None
             name_col = None
             div_col = None
@@ -96,28 +94,23 @@ class DataLoader:
             
             if ticker_col is None:
                 logger.error(f"Could not find ticker column. Columns: {list(df.columns)}")
-                # Try first column as ticker
                 ticker_col = df.columns[0]
                 logger.info(f"Using first column '{ticker_col}' as ticker")
             
-            # Process each fund
             for _, row in df.iterrows():
                 ticker = str(row[ticker_col]).strip()
                 if not ticker or pd.isna(ticker) or ticker == 'nan' or ticker == '':
                     continue
                 
-                # Get fund name
                 if name_col and not pd.isna(row[name_col]):
                     fund_name = str(row[name_col]).strip()
                 else:
                     fund_name = ticker
                 
-                # Parse dividend yield
                 div_yield = 0.0
                 if div_col and not pd.isna(row[div_col]) and row[div_col] != '':
                     div_val = str(row[div_col]).strip()
                     if div_val and div_val != 'nan':
-                        # Remove % sign and convert to decimal
                         div_val = div_val.replace('%', '').strip()
                         try:
                             div_yield = float(div_val) / 100
@@ -126,7 +119,6 @@ class DataLoader:
                 
                 self.dividend_yields[ticker] = div_yield
                 
-                # Store in fund_info DataFrame
                 if self.fund_info is None:
                     self.fund_info = pd.DataFrame(columns=['fund_name', 'dividend_yield'])
                 
@@ -145,15 +137,11 @@ class DataLoader:
         # We forward-fill then backward-fill to handle any missing trading days cleanly
         # without introducing NaNs that would break the optimizer math later.
         try:
-            # Read all data
             df = pd.read_excel(excel_file, sheet_name=sheet_name)
             logger.info(f"Loading fund returns from '{sheet_name}' with {len(df)} rows")
             logger.info(f"Columns: {list(df.columns)}")
-            
-            # Print first few rows for debugging
             logger.info(f"First 5 rows:\n{df.head()}")
             
-            # Find columns - look for date, ticker, return
             date_col = None
             ticker_col = None
             return_col = None
@@ -170,32 +158,18 @@ class DataLoader:
             if not all([date_col, ticker_col, return_col]):
                 raise ValueError(f"Missing required columns. Found date:{date_col}, ticker:{ticker_col}, return:{return_col}")
             
-            # Clean and prepare data
             df_clean = pd.DataFrame()
             df_clean['date'] = pd.to_datetime(df[date_col])
             df_clean['ticker'] = df[ticker_col].astype(str).str.strip()
             
-            # Convert returns from percentage to decimal
             returns_raw = df[return_col].astype(str).str.replace('%', '').str.strip()
-            df_clean['return'] = pd.to_numeric(returns_raw, errors='coerce') / 100
-            
-            # Remove invalid returns
+            df_clean['return'] = pd.to_numeric(returns_raw, errors='coerce')
             df_clean = df_clean.dropna(subset=['return'])
             
-            # Check what tickers we have
             unique_tickers = df_clean['ticker'].unique()
             logger.info(f"Unique tickers found in returns data: {list(unique_tickers)}")
             
-            # Pivot to wide format
             pivot_df = df_clean.pivot(index='date', columns='ticker', values='return')
-            
-            # Forward fill missing values (use last known return)
-            pivot_df = pivot_df.ffill()
-            
-            # Backward fill for any remaining NaNs at the beginning
-            pivot_df = pivot_df.bfill()
-            
-            # Drop any rows that are still all NaN
             pivot_df = pivot_df.dropna(how='all')
             
             self.fund_returns = pivot_df
@@ -213,18 +187,15 @@ class DataLoader:
     def _load_factor_returns(self, excel_file: pd.ExcelFile, sheet_name: str):
         # Same long-to-wide pivot pattern as fund returns but for factors.
         # Factor names get lowercased and spaces replaced with underscores so they
-        # match the factor keys used throughout the rest of the codebase (e.g. "value_factor" → "value_factor").
+        # match the factor keys used throughout the rest of the codebase.
         # If anything goes wrong here we log a warning and set factor_returns to None
         # rather than raising — factor data is optional and we don't want it to block startup.
         try:
             df = pd.read_excel(excel_file, sheet_name=sheet_name)
             logger.info(f"Loading factor returns from '{sheet_name}' with {len(df)} rows")
             logger.info(f"Columns: {list(df.columns)}")
-            
-            # Print first few rows for debugging
             logger.info(f"First 5 rows:\n{df.head()}")
             
-            # Find columns
             date_col = None
             factor_col = None
             return_col = None
@@ -242,31 +213,20 @@ class DataLoader:
                 logger.warning(f"Factor columns not found. Found date:{date_col}, factor:{factor_col}, return:{return_col}")
                 return
             
-            # Clean and prepare data
             df_clean = pd.DataFrame()
             df_clean['date'] = pd.to_datetime(df[date_col])
             df_clean['factor'] = df[factor_col].astype(str).str.lower()
             df_clean['factor'] = df_clean['factor'].str.replace(' factor', '').str.replace(' ', '_').str.strip()
             
-            # Convert returns from percentage to decimal
             returns_raw = df[return_col].astype(str).str.replace('%', '').str.strip()
-            df_clean['return'] = pd.to_numeric(returns_raw, errors='coerce') / 100
-            
-            # Remove invalid returns
+            df_clean['return'] = pd.to_numeric(returns_raw, errors='coerce')
             df_clean = df_clean.dropna(subset=['return'])
             
-            # Get unique factors
             unique_factors = df_clean['factor'].unique()
             logger.info(f"Unique factors found: {list(unique_factors)}")
             
-            # Pivot to wide format
-            pivot_df = df_clean.pivot(index='date', columns='factor', values='return')
-            
-            # Forward fill missing values
-            pivot_df = pivot_df.ffill()
-            
-            # Backward fill for any remaining NaNs
-            pivot_df = pivot_df.bfill()
+            pivot_df = pivot_df.dropna(how='all')
+            pivot_df = pivot_df.ffill().bfill()
             
             self.factor_returns = pivot_df
             
@@ -282,19 +242,14 @@ class DataLoader:
     
     def _create_fund_info_from_returns(self):
         # Fallback used when the fund info sheet is missing or fails to load.
-        # We just use ticker symbols as fund names and set all dividend yields to 0
-        # so the rest of the app can still run without crashing.
         if self.fund_returns is None:
             return
         
         tickers = self.fund_returns.columns
-        
-        # Create fund info DataFrame
         self.fund_info = pd.DataFrame(index=tickers)
         self.fund_info['fund_name'] = tickers
         self.fund_info['dividend_yield'] = '0%'
         
-        # Set dividend yields to 0 as we don't have data
         for ticker in tickers:
             if ticker not in self.dividend_yields:
                 self.dividend_yields[ticker] = 0.0
@@ -310,7 +265,6 @@ class DataLoader:
         logger.info(f"Available funds in data: {list(self.fund_returns.columns)}")
         logger.info(f"Requested tickers: {tickers}")
         
-        # Validate tickers exist
         available_tickers = set(self.fund_returns.columns)
         missing = set(tickers) - available_tickers
         
@@ -319,18 +273,52 @@ class DataLoader:
                 f"Tickers not found: {missing}. Available: {available_tickers}"
             )
         
-        # Return data for requested tickers
         result = self.fund_returns[tickers].copy()
         
-        # Check if we have data
         if len(result) == 0:
             raise ErrorHandler.infeasible_constraints(
                 f"No return data available for tickers: {tickers}"
             )
         
         logger.info(f"Returning {len(result)} days of data for {tickers}")
-        
         return result
+
+    def get_fund_returns_for_date_range(
+        self,
+        tickers: List[str],
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> pd.DataFrame:
+        # Fetches returns for the given tickers and then slices to the requested
+        # date window. Both start_date and end_date are optional — if only one is
+        # provided we apply just that boundary and leave the other end open.
+        # After slicing we validate that enough rows remain (at least 30 trading days)
+        # to produce a meaningful optimization result.
+        # This is how the API mirrors the live tool's Time Frame setting —
+        # the same underlying data is used but viewed through a different window.
+        returns = self.get_fund_returns(tickers)
+        # Drop rows where ANY ticker has NaN or zero (e.g. before a fund existed)
+        # This ensures we only use the true common date range across all tickers
+        returns = returns.replace(0, np.nan)
+        returns = returns.dropna(how='any')
+        logger.info(f"After cleaning zeros/NaN, date range: {returns.index[0]} to {returns.index[-1]}, {len(returns)} rows")
+        if start_date is not None:
+            start_dt = pd.to_datetime(start_date)
+            returns = returns[returns.index >= start_dt]
+            logger.info(f"Applied start_date filter ({start_date}): {len(returns)} rows remain")
+
+        if end_date is not None:
+            end_dt = pd.to_datetime(end_date)
+            returns = returns[returns.index <= end_dt]
+            logger.info(f"Applied end_date filter ({end_date}): {len(returns)} rows remain")
+
+        if len(returns) < 30:
+            raise ErrorHandler.infeasible_constraints(
+                f"After applying date range ({start_date} → {end_date}), only {len(returns)} "
+                f"trading days remain. Need at least 30 days for a valid optimization."
+            )
+
+        return returns
     
     def get_fund_info(self, ticker: str) -> Dict:
         # Simple lookup — returns a safe default dict if the ticker isn't in fund_info
@@ -344,26 +332,22 @@ class DataLoader:
     
     def get_all_funds(self) -> List[str]:
         # Returns column names from fund_returns which is the authoritative list of
-        # tickers we actually have price history for — not just what's in fund_info.
+        # tickers we actually have price history for.
         if self.fund_returns is not None:
             return list(self.fund_returns.columns)
         return []
     
     def get_factor_returns(self) -> Optional[pd.DataFrame]:
         # Thin accessor so callers don't touch self.factor_returns directly.
-        # Returns None if factor data wasn't loaded, which callers are expected to handle.
         return self.factor_returns
     
     def get_dividend_yield(self, ticker: str) -> float:
-        # Returns 0.0 as the default so math downstream never breaks on a missing ticker —
-        # a fund with no dividend data is treated as paying no dividends.
+        # Returns 0.0 as the default so math downstream never breaks on a missing ticker.
         return self.dividend_yields.get(ticker, 0.0)
     
     def get_common_date_range(self, returns: pd.DataFrame) -> pd.DataFrame:
         # Factor returns and fund returns may not cover identical date ranges,
         # so we intersect their indexes and return only the overlapping dates.
-        # If there's no overlap at all we just return the original returns unchanged
-        # so the caller can still run non-factor strategies.
         if self.factor_returns is None:
             return returns
         
@@ -376,8 +360,7 @@ class DataLoader:
         return returns
     
     def get_data_summary(self) -> Dict[str, Any]:
-        # Aggregates everything we know about the loaded data into one dict —
-        # handy for a /health or /debug endpoint to confirm what the service loaded at startup.
+        # Aggregates everything we know about the loaded data into one dict.
         summary = {
             'fund_returns': {
                 'loaded': self.fund_returns is not None,

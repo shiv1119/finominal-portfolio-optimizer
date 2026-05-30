@@ -58,23 +58,34 @@ class PortfolioOptimizer:
         # Used as the starting point (initial guess) for every optimizer in this class.
         return np.ones(n_assets) / n_assets
     
-    def risk_parity(self, returns: pd.DataFrame, bounds: List[Tuple]) -> np.ndarray:
-        # Risk parity means each asset contributes the same amount of risk to the portfolio,
+    def risk_parity(
+        self,
+        returns: pd.DataFrame,
+        bounds: List[Tuple],
+        extra_constraints: Optional[List[Dict]] = None
+    ) -> np.ndarray:
+        cov_matrix = returns.cov() * 252
+        n_assets = len(returns.columns)
+                # Risk parity means each asset contributes the same amount of risk to the portfolio,
         # rather than each asset having the same dollar weight.
         # The objective minimizes the squared difference between each asset's actual risk
         # contribution and the target (total portfolio vol / number of assets).
+        # Portfolio-level constraints (extra_constraints) are appended after the sum-to-1
+        # equality so the solver respects them alongside the risk parity objective.
         # If the optimizer fails to converge we fall back to equal weights rather than crashing.
-        cov_matrix = returns.cov() * 252
-        n_assets = len(returns.columns)
-        
+        # Scale up covariance matrix so objective values are numerically stable
+        # SLSQP struggles when objective is on the order of 1e-14
+        scale = 1.0 / cov_matrix.values.mean()
+        cov_scaled = cov_matrix * scale
+
         def portfolio_volatility(weights):
-            return np.sqrt(weights @ cov_matrix @ weights)
+            return np.sqrt(weights @ cov_scaled @ weights)
         
         def risk_contributions(weights):
             portfolio_vol = portfolio_volatility(weights)
             if portfolio_vol == 0:
                 return np.ones(n_assets) / n_assets
-            marginal_risk = cov_matrix @ weights / portfolio_vol
+            marginal_risk = cov_scaled @ weights / portfolio_vol
             return weights * marginal_risk
         
         def objective(weights):
@@ -83,6 +94,8 @@ class PortfolioOptimizer:
             return np.sum((rc - target_rc) ** 2)
         
         constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1}]
+        if extra_constraints:
+            constraints.extend(extra_constraints)
         
         result = minimize(
             objective,
@@ -90,25 +103,33 @@ class PortfolioOptimizer:
             method='SLSQP',
             bounds=bounds,
             constraints=constraints,
-            options={'maxiter': 1000, 'ftol': 1e-9}
+            options={'maxiter': 1000, 'ftol': 1e-12}
         )
         
         if not result.success:
-            # Fallback to equal weights if optimization fails
             return self.equal_weights(n_assets)
         
         return result.x
-    
-    def minimize_volatility(self, returns: pd.DataFrame, bounds: List[Tuple]) -> np.ndarray:
+
+    def minimize_volatility(
+        self,
+        returns: pd.DataFrame,
+        bounds: List[Tuple],
+        extra_constraints: Optional[List[Dict]] = None
+    ) -> np.ndarray:
         # The objective is simply the portfolio's annualized standard deviation.
         # scipy.minimize will nudge the weights until it finds the combination that
         # produces the smallest possible volatility while keeping weights summed to 1.
+        # extra_constraints carries any portfolio-level constraints (CAGR, drawdown, etc.)
+        # that must also be satisfied at the solution.
         cov_matrix = returns.cov() * 252
         
         def objective(weights):
             return np.sqrt(weights @ cov_matrix @ weights)
         
         constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1}]
+        if extra_constraints:
+            constraints.extend(extra_constraints)
         
         result = minimize(
             objective,
@@ -124,15 +145,23 @@ class PortfolioOptimizer:
         
         return result.x
     
-    def minimize_drawdown(self, returns: pd.DataFrame, bounds: List[Tuple]) -> np.ndarray:
+    def minimize_drawdown(
+        self,
+        returns: pd.DataFrame,
+        bounds: List[Tuple],
+        extra_constraints: Optional[List[Dict]] = None
+    ) -> np.ndarray:
         # Drawdown is expensive to compute on every optimizer iteration since it requires
         # replaying the full return history, but it's the most direct way to limit losses.
         # We pass calculate_max_drawdown directly as the objective and let SLSQP do the work.
+        # extra_constraints carries any additional portfolio-level constraints.
         
         def objective(weights):
             return self.calculate_max_drawdown(weights, returns)
         
         constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1}]
+        if extra_constraints:
+            constraints.extend(extra_constraints)
         
         result = minimize(
             objective,
@@ -148,14 +177,25 @@ class PortfolioOptimizer:
         
         return result.x
     
-    def maximize_sharpe_ratio(self, returns: pd.DataFrame, bounds: List[Tuple]) -> np.ndarray:
+    def maximize_sharpe_ratio(
+        self,
+        returns: pd.DataFrame,
+        bounds: List[Tuple],
+        extra_constraints: Optional[List[Dict]] = None
+    ) -> np.ndarray:
         # scipy only minimizes, so we flip the sign of the Sharpe ratio to turn
         # "maximize Sharpe" into "minimize negative Sharpe" — same problem, same solution.
-        
+        # extra_constraints carries any additional portfolio-level constraints.
+        print(f"Sharpe date range: {returns.index[0]} to {returns.index[-1]}")
+        print(f"Number of rows: {len(returns)}")
+        print(f"Returns mean (annualized):\n{returns.mean() * 252}")
+        print(f"Returns std (annualized):\n{returns.std() * np.sqrt(252)}")
         def negative_sharpe(weights):
             return -self.calculate_portfolio_sharpe(weights, returns)
         
         constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1}]
+        if extra_constraints:
+            constraints.extend(extra_constraints)
         
         result = minimize(
             negative_sharpe,

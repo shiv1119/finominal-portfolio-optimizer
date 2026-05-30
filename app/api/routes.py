@@ -38,15 +38,19 @@ async def health_check():
     # without hitting the full optimization endpoint.
     try:
         available_funds = data_loader.get_all_funds()
+        summary = data_loader.get_data_summary()
+        date_range = summary.get('fund_returns', {}).get('date_range', {})
         return HealthResponse(
             status="healthy",
             available_funds=available_funds,
-            available_strategies=["equal_weights", "risk_parity", "minimize_drawdown", 
-                                  "minimize_volatility", "maximize_sharpe_ratio", 
-                                  "optimize_factor_exposure"],
+            available_strategies=[
+                "equal_weights", "risk_parity", "minimize_drawdown",
+                "minimize_volatility", "maximize_sharpe_ratio",
+                "optimize_factor_exposure"
+            ],
             data_date_range={
-                "start": "Available",
-                "end": "Available"
+                "start": date_range.get("start", "N/A"),
+                "end": date_range.get("end", "N/A")
             }
         )
     except Exception as e:
@@ -55,25 +59,21 @@ async def health_check():
 
 @router.post("/optimize", response_model=OptimizationResponse)
 async def optimize_portfolio(request: OptimizationRequest):
-    # Main endpoint — orchestrates the full request lifecycle in six clear steps
-    # so it's easy to follow where a failure happened if something goes wrong.
-    # Steps 1–4 are all about validating and preparing the data before we touch
-    # the optimizer, because catching bad input early gives cleaner error messages.
+    # Main endpoint — orchestrates the full request lifecycle in six clear steps.
+    # Steps 1–4 validate and prepare data before touching the optimizer.
     try:
         logger.info(f"Received optimization request with strategy: {request.strategy}")
+        if request.start_date or request.end_date:
+            logger.info(f"Date range filter: {request.start_date} → {request.end_date}")
         
-        # 1 - Fist extract securities data
-        # Pull tickers and weights out of the Pydantic models into plain lists
-        # so the service layer doesn't need to know about request model structure.
+        # 1 — Extract securities data
         securities = [sec.ticker for sec in request.securities]
         current_weights = [sec.current_weight for sec in request.securities]
         
         logger.info(f"Securities: {securities}")
         logger.info(f"Current weights: {current_weights}")
         
-        # 2 - Validate Tickers
-        # Check every ticker against what we actually have data for —
-        # a single unknown ticker would cause a silent KeyError deep in the optimizer.
+        # 2 — Validate tickers
         available_funds = data_loader.get_all_funds()
         logger.info(f"Available funds in data: {available_funds}")
         
@@ -81,16 +81,12 @@ async def optimize_portfolio(request: OptimizationRequest):
             if ticker not in available_funds:
                 raise ErrorHandler.invalid_ticker(ticker)
         
-        # 3 -Now validate current weights
-        # Even though Pydantic already checks this, we re-verify here as a belt-and-suspenders
-        # guard in case the request was constructed programmatically and bypassed the model.
+        # 3 — Validate current weights
         total_weight = sum(current_weights)
         if abs(total_weight - 100) > 0.01:
             raise ErrorHandler.weights_not_sum_to_100(total_weight)
         
-        # 4 - now prepare constraints
-        # Convert Pydantic constraint models into plain dicts that the service layer
-        # can work with — keeps the service layer decoupled from API model types.
+        # 4 — Prepare constraints
         weight_constraints_dict = None
         if request.weight_constraints:
             weight_constraints_dict = {
@@ -105,9 +101,10 @@ async def optimize_portfolio(request: OptimizationRequest):
         if request.portfolio_constraints:
             portfolio_constraints = request.portfolio_constraints.dict(exclude_none=True)
         
-        # 5 - Now run optimization
-        # Hand everything off to the service layer and get back the optimized weights
-        # plus factor betas for both the original and optimized portfolios.
+        # 5 — Run optimization
+        # start_date and end_date are forwarded so the service slices the historical
+        # data to the exact window the user requested, matching the live tool's
+        # Time Frame behaviour.
         optimized_weights, current_betas, optimized_betas = portfolio_service.optimize(
             securities=securities,
             current_weights=current_weights,
@@ -115,14 +112,12 @@ async def optimize_portfolio(request: OptimizationRequest):
             weight_constraints=weight_constraints_dict,
             portfolio_constraints=portfolio_constraints,
             factor_to_optimize=request.factor_to_optimize,
-            factor_direction=request.factor_direction
+            factor_direction=request.factor_direction,
+            start_date=request.start_date,
+            end_date=request.end_date
         )
         
-        # 6 - Now prepare response
-        # Convert raw numpy weights back to rounded percentages and pair each one
-        # with its fund name and the change vs the original weight.
-        # Factor betas are only included in the response when they were actually computed —
-        # i.e. when factor return data was loaded and the strategy needed them.
+        # 6 — Prepare response
         allocation_changes = []
         for i, security in enumerate(request.securities):
             fund_info = data_loader.get_fund_info(security.ticker)
@@ -138,7 +133,6 @@ async def optimize_portfolio(request: OptimizationRequest):
                 )
             )
         
-        # Now prepare factor betas response if available
         factor_betas_response = None
         if current_betas and optimized_betas:
             factor_betas_response = FactorBetasResponse(
@@ -154,7 +148,7 @@ async def optimize_portfolio(request: OptimizationRequest):
                 )
             )
         
-        logger.info(f"Optimization completed successfully")
+        logger.info("Optimization completed successfully")
         
         return OptimizationResponse(
             optimization_strategy=request.strategy.value,
@@ -163,20 +157,17 @@ async def optimize_portfolio(request: OptimizationRequest):
         )
         
     except PortfolioOptimizerException as e:
-        # Re-raise our own exceptions as-is since they already have the right
-        # status code and structured detail — no need to wrap them again.
+        # Re-raise our own exceptions as-is since they already carry the right
+        # status code and structured detail.
         logger.error(f"Portfolio optimizer exception: {e.detail}")
         raise
     except Exception as e:
-        # Anything else is unexpected, so we wrap it in a generic 500 to avoid
-        # leaking internal stack details to the client.
         logger.error(f"Unexpected error: {str(e)}", exc_info=True)
         raise ErrorHandler.internal_error(f"Optimization failed: {str(e)}")
 
 @router.get("/funds")
 async def get_available_funds():
-    # Loops through every loaded fund and attaches its name and dividend yield
-    # so clients can build a picker UI without needing a separate info lookup per ticker.
+    # Returns every loaded fund with its name and dividend yield.
     try:
         funds = []
         for ticker in data_loader.get_all_funds():
@@ -191,15 +182,3 @@ async def get_available_funds():
     except Exception as e:
         logger.error(f"Failed to get funds: {str(e)}")
         raise ErrorHandler.internal_error("Failed to retrieve fund information")
-
-@router.get("/debug/data")
-async def debug_data():
-    # Development-only endpoint that dumps the full data summary so we can
-    # quickly confirm what got loaded without having to restart the server and
-    # dig through logs. Returns the error as a plain dict instead of raising
-    # so it's always reachable even when data is in a bad state.
-    try:
-        summary = data_loader.get_data_summary()
-        return summary
-    except Exception as e:
-        return {"error": str(e)}

@@ -141,16 +141,31 @@ All six test cases from the assignment, validated against the live Finominal too
 **Input:** IEFA: 25%, SPY: 75% &nbsp;|&nbsp; **Strategy:** Equal Weights
 
 ```bash
-curl -X POST 'http://127.0.0.1:8000/api/v1/optimize' \
+curl -X 'POST' \
+  'http://127.0.0.1:8000/api/v1/optimize' \
+  -H 'accept: application/json' \
   -H 'Content-Type: application/json' \
   -d '{
-    "securities": [
-      {"ticker": "IEFA", "current_weight": 25},
-      {"ticker": "SPY", "current_weight": 75}
-    ],
-    "strategy": "equal_weights"
-  }'
+  "securities": [
+    { "ticker": "IEFA", "current_weight": 25 },
+    { "ticker": "SPY", "current_weight": 75 }
+  ],
+  "strategy": "equal_weights",
+  "weight_constraints": {},
+  "portfolio_constraints": {}
+}'
 ```
+<h2>Local Response Equal Weights</h2>
+
+<p align="center">
+  <img src="images/local_response_equal_weights.png" width="800"/>
+</p>
+
+<h2>Online Tool Equal Weights</h2>
+
+<p align="center">
+  <img src="images/online_tool_equal_weights.png" width="800"/>
+</p>
 
 ---
 
@@ -165,9 +180,22 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/optimize' \
       {"ticker": "VEA", "current_weight": 25},
       {"ticker": "AGG", "current_weight": 75}
     ],
-    "strategy": "risk_parity"
+    "strategy": "risk_parity",
+    "weight_constraints": {},
+    "portfolio_constraints": {}
   }'
 ```
+<h2>Local Response Risk Parity</h2>
+
+<p align="center">
+  <img src="images/local_response_risk_parity.png" width="800"/>
+</p>
+
+<h2>Online Tool Risk Parity</h2>
+
+<p align="center">
+  <img src="images/online_tool_risk_parity.png" width="800"/>
+</p>
 
 ---
 
@@ -175,17 +203,33 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/optimize' \
 **Input:** SPY: 60%, AGG: 30%, GLD: 10% &nbsp;|&nbsp; **Strategy:** Minimize Volatility
 
 ```bash
-curl -X POST 'http://127.0.0.1:8000/api/v1/optimize' \
+curl -X 'POST' \
+  'http://127.0.0.1:8000/api/v1/optimize' \
+  -H 'accept: application/json' \
   -H 'Content-Type: application/json' \
   -d '{
-    "securities": [
-      {"ticker": "SPY", "current_weight": 60},
-      {"ticker": "AGG", "current_weight": 30},
-      {"ticker": "GLD", "current_weight": 10}
-    ],
-    "strategy": "minimize_volatility"
-  }'
+  "securities": [
+    { "ticker": "SPY", "current_weight": 60 },
+    { "ticker": "AGG", "current_weight": 30 },
+    { "ticker": "GLD", "current_weight": 10 }
+  ],
+  "strategy": "minimize_volatility",
+  "weight_constraints": {},
+  "portfolio_constraints": {}
+}'
 ```
+<h2>Local Response Minimize Volatility</h2>
+
+<p align="center">
+  <img src="images/local_response_minimize_volatility_1.png" width="800"/>
+  <img src="images/local_response_minimize_volatility_2.png" width="800"/>
+</p>
+
+<h2>Online Tool Minimize Volatility</h2>
+
+<p align="center">
+  <img src="images/online_tool_minimize_volatility.png" width="800"/>
+</p>
 
 ---
 
@@ -206,6 +250,18 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/optimize' \
     "strategy": "maximize_sharpe_ratio"
   }'
 ```
+<h2>Local Response Minimize Volatility</h2>
+
+<p align="center">
+  <img src="images/local_response_minimize_volatility_1.png" width="800"/>
+  <img src="images/local_response_minimize_volatility_2.png" width="800"/>
+</p>
+
+<h2>Online Tool Minimize Volatility</h2>
+
+<p align="center">
+  <img src="images/online_tool_minimize_volatility.png" width="800"/>
+</p>
 
 ---
 

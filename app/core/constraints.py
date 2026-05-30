@@ -51,7 +51,7 @@ class ConstraintValidator:
     ) -> bool:
         # If no constraints were passed in, nothing to check — return True immediately.
         # Otherwise, run each constraint check one by one and bail out early with False
-        # the moment any single constraint is violated. All three must pass to return True.
+        # the moment any single constraint is violated. All constraints must pass to return True.
         if not portfolio_constraints:
             return True
         
@@ -61,7 +61,15 @@ class ConstraintValidator:
             if cagr < portfolio_constraints['min_cagr']:
                 return False
         
-        # Check volatility constraint
+        # Check volatility lower bound — portfolio must be AT LEAST this volatile.
+        # Useful when the user wants to avoid cash-like allocations that technically
+        # minimize volatility but produce no meaningful return.
+        if 'min_volatility' in portfolio_constraints and portfolio_constraints['min_volatility'] is not None:
+            vol = portfolio_service.calculate_portfolio_volatility(weights, returns) * 100
+            if vol < portfolio_constraints['min_volatility']:
+                return False
+
+        # Check volatility upper bound — portfolio must be NO MORE volatile than this.
         if 'max_volatility' in portfolio_constraints and portfolio_constraints['max_volatility'] is not None:
             vol = portfolio_service.calculate_portfolio_volatility(weights, returns) * 100
             if vol > portfolio_constraints['max_volatility']:
@@ -89,7 +97,6 @@ class ConstraintValidator:
         if min_dividend_yield is None:
             return True
         
-        # Calculate portfolio dividend yield
         portfolio_div_yield = 0.0
         for i, ticker in enumerate(tickers):
             div_yield = dividend_yields.get(ticker, 0.0)
@@ -97,6 +104,80 @@ class ConstraintValidator:
         
         return portfolio_div_yield >= min_dividend_yield
     
+    def build_scipy_portfolio_constraints(
+        self,
+        portfolio_constraints: Optional[Dict],
+        returns: pd.DataFrame,
+        tickers: List[str],
+        dividend_yields: Dict[str, float],
+        portfolio_optimizer
+    ) -> List[Dict]:
+        # Converts portfolio-level constraints into SciPy-compatible constraint dicts
+        # so they are enforced DURING optimization, not just validated after.
+        # Each entry follows the SciPy format: {"type": "ineq", "fun": callable}
+        # where "ineq" means fun(weights) >= 0 must hold at the solution.
+        # This is how we wire min_cagr, min/max_volatility, max_drawdown, and
+        # min_dividend_yield directly into the SLSQP solver.
+        scipy_constraints = []
+
+        if not portfolio_constraints:
+            return scipy_constraints
+
+        # Min CAGR — portfolio annualised return must be at least this value.
+        if portfolio_constraints.get('min_cagr') is not None:
+            min_cagr = portfolio_constraints['min_cagr']
+            scipy_constraints.append({
+                'type': 'ineq',
+                'fun': lambda w, r=returns, mc=min_cagr: (
+                    portfolio_optimizer.calculate_cagr(w, r) - mc
+                )
+            })
+
+        # Min volatility — lower bound of the volatility range.
+        # fun >= 0  =>  actual_vol - min_vol >= 0  =>  actual_vol >= min_vol
+        if portfolio_constraints.get('min_volatility') is not None:
+            min_vol = portfolio_constraints['min_volatility'] / 100  # % → decimal
+            scipy_constraints.append({
+                'type': 'ineq',
+                'fun': lambda w, r=returns, mv=min_vol: (
+                    portfolio_optimizer.calculate_portfolio_volatility(w, r) - mv
+                )
+            })
+
+        # Max volatility — upper bound of the volatility range.
+        # fun >= 0  =>  max_vol - actual_vol >= 0  =>  actual_vol <= max_vol
+        if portfolio_constraints.get('max_volatility') is not None:
+            max_vol = portfolio_constraints['max_volatility'] / 100  # % → decimal
+            scipy_constraints.append({
+                'type': 'ineq',
+                'fun': lambda w, r=returns, mv=max_vol: (
+                    mv - portfolio_optimizer.calculate_portfolio_volatility(w, r)
+                )
+            })
+
+        # Max drawdown — peak-to-trough loss must not exceed this threshold.
+        # fun >= 0  =>  max_dd - actual_dd >= 0  =>  actual_dd <= max_dd
+        if portfolio_constraints.get('max_drawdown') is not None:
+            max_dd = portfolio_constraints['max_drawdown']
+            scipy_constraints.append({
+                'type': 'ineq',
+                'fun': lambda w, r=returns, md=max_dd: (
+                    md - portfolio_optimizer.calculate_max_drawdown(w, r)
+                )
+            })
+
+        # Min dividend yield — weighted portfolio yield must be at least this value.
+        # fun >= 0  =>  actual_yield - min_yield >= 0  =>  actual_yield >= min_yield
+        if portfolio_constraints.get('min_dividend_yield') is not None:
+            min_yield = portfolio_constraints['min_dividend_yield'] / 100  # % → decimal
+            dy_array = np.array([dividend_yields.get(t, 0.0) for t in tickers])
+            scipy_constraints.append({
+                'type': 'ineq',
+                'fun': lambda w, dy=dy_array, my=min_yield: float(np.dot(w, dy)) - my
+            })
+
+        return scipy_constraints
+
     def check_feasibility(
         self,
         bounds: List[Tuple[float, float]],
