@@ -250,19 +250,6 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/optimize' \
     "strategy": "maximize_sharpe_ratio"
   }'
 ```
-<h2>Local Response Minimize Volatility</h2>
-
-<p align="center">
-  <img src="images/local_response_minimize_volatility_1.png" width="800"/>
-  <img src="images/local_response_minimize_volatility_2.png" width="800"/>
-</p>
-
-<h2>Online Tool Minimize Volatility</h2>
-
-<p align="center">
-  <img src="images/online_tool_minimize_volatility.png" width="800"/>
-</p>
-
 ---
 
 ### Case 5 — Maximize Sharpe with Constraints
