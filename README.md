@@ -19,7 +19,6 @@
   <a href="#white_check_mark-requirements">Requirements</a> &#xa0;|&#xa0;
   <a href="#checkered_flag-getting-started">Getting Started</a> &#xa0;|&#xa0;
   <a href="#test_tube-test-scenarios">Test Scenarios</a> &#xa0;|&#xa0;
-  <a href="#memo-api-response-format">API Response Format</a> &#xa0;|&#xa0;
   <a href="#bulb-design-decisions">Design Decisions</a> &#xa0;|&#xa0;
   <a href="https://github.com/shiv1119" target="_blank">Author</a>
 </p>
